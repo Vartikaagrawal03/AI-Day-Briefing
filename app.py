@@ -1,38 +1,48 @@
+import os
+import json
 import streamlit as st
-from run_pipeline import run_full_pipeline
-from briefing_agent import generate_briefing
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 
-st.set_page_config(page_title="AI Day-Briefing", page_icon="📋", layout="centered")
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/calendar.readonly'
+]
 
-st.title("📋 AI Day-Briefing Agent")
-st.caption("An AI agent that reads your Gmail + Calendar and generates a personalized daily briefing")
 
-st.divider()
+def get_google_services():
+    creds = None
 
-if st.button("🔄 Generate Today's Briefing", type="primary"):
-    with st.spinner("Fetching emails and calendar events..."):
-        emails, events = run_full_pipeline()
+    # Try Streamlit Cloud secrets first
+    try:
+        token_data = json.loads(st.secrets["GOOGLE_TOKEN_JSON"])
+        creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+    except Exception:
+        # Fall back to local token.json
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
 
-    with st.spinner("Generating your briefing with AI..."):
-        briefing = generate_briefing(emails, events)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            # Local-only fallback — won't work on cloud without browser
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
 
-    st.success("Briefing generated!")
-    st.subheader("Your Briefing")
-    st.write(briefing)
+        # Save locally only if running locally
+        if not hasattr(st, 'secrets') or "GOOGLE_TOKEN_JSON" not in st.secrets:
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
 
-    st.divider()
+    gmail_service = build('gmail', 'v1', credentials=creds)
+    calendar_service = build('calendar', 'v3', credentials=creds)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Emails Analyzed", len(emails))
-    with col2:
-        high_priority = len([e for e in emails if e['urgency_score'] >= 4])
-        st.metric("High Priority", high_priority)
+    print("✅ Gmail and Calendar connected successfully!")
+    return gmail_service, calendar_service
 
-    with st.expander("🔍 See Email Breakdown"):
-        for e in emails[:10]:
-            st.write(f"**{e['subject']}**")
-            st.caption(f"From: {e['sender']} | Urgency: {e['urgency_score']}/10 | Category: {e['category']}")
-            st.divider()
-else:
-    st.info("👆 Click the button above to generate your daily briefing")
+
+if __name__ == "__main__":
+    gmail, calendar = get_google_services()
