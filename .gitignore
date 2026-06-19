@@ -1,0 +1,8 @@
+credentials.json
+token.json
+.env
+briefing_data.db
+__pycache__/
+.ipynb_checkpoints/
+venv/
+anaconda_projects/
